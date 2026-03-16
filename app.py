@@ -23,75 +23,102 @@ st.sidebar.info("핀란드 해양청(Digitraffic) 실시간 데이터를 사용 
 if st.sidebar.button("🔄 데이터 새로고침"):
     st.cache_data.clear() # 캐시 삭제 후 새로고침
 
-# 주요 항구 위치 데이터
+# 주요 항구 및 관심 지역 위치 데이터
 PORTS = {
-    "헬싱키 (Helsinki)": {"lat": 60.16, "lon": 24.95},
-    "투르쿠 (Turku)": {"lat": 60.43, "lon": 22.22},
-    "탈린 (Tallinn)": {"lat": 59.44, "lon": 24.76},
-    "상트페테르부르크": {"lat": 59.93, "lon": 30.31}
+    "헬싱키 (Helsinki)": {"lat": 60.160, "lon": 24.950},
+    "투르쿠 (Turku)": {"lat": 60.430, "lon": 22.220},
+    "탈린 (Tallinn)": {"lat": 59.440, "lon": 24.760},
+    "코트카 (Kotka)": {"lat": 60.460, "lon": 26.940},
+    "라우마 (Rauma)": {"lat": 61.130, "lon": 21.450},
+    "포리 (Pori)": {"lat": 61.480, "lon": 21.780},
+    "오울루 (Oulu)": {"lat": 65.010, "lon": 25.460},
+    "상트페테르부르크": {"lat": 59.930, "lon": 30.310},
+    "스톡홀름": {"lat": 59.330, "lon": 18.060}
 }
 
 # --- 4. 데이터 로드 ---
 try:
-    with st.spinner('실시간 위치 정보를 가져오는 중입니다...'):
+    with st.spinner('핀란드 해양청에서 실시간 위성 AIS 데이터를 불러오는 중...'):
         df = fetch_ais_data()
 
     if not df.empty:
         # 데이터 출처 표시
         if df['is_real_data'].iloc[0]:
-            st.sidebar.success(f"✅ 실시간 연결 성공 (총 {len(df):,}척)")
+            st.sidebar.success(f"✅ 실시간 연결 성공 (총 {len(df):,}척 수신)")
         else:
             st.sidebar.warning("⚠️ 네트워크 오류로 샘플 데이터를 표시 중입니다.")
 
         # --- 필터 설정 ---
-        st.sidebar.subheader("🔍 필터")
+        st.sidebar.subheader("🔍 선박 필터링")
         
-        # 1. 선박명 검색 추가
-        search_query = st.sidebar.text_input("🚢 선박명 검색", "").strip()
+        # 1. 선박명 검색
+        search_query = st.sidebar.text_input("🚢 선박 이름으로 찾기", "").strip()
         
-        # 2. 목적지 필터
-        all_destinations = sorted([str(d) for d in df['destination'].unique()])
-        default_selection = [d for d in all_destinations if d == '정보 없음' or d == 'Unknown']
-        if not default_selection:
-            default_selection = all_destinations[:5]
-
-        selected_dests = st.sidebar.multiselect("목적지별 필터링", all_destinations, default=default_selection)
+        # 2. 목적지(Destination) 필터 고도화
+        # 데이터 내 실제 목적지 값들 정리 (대문자 변환 및 중복 제거)
+        raw_destinations = df['destination'].astype(str).str.upper().unique()
+        raw_destinations = sorted([d for d in raw_destinations if d not in ['정보 없음', 'UNKNOWN', 'NAN', '']])
         
-        # 필터링 적용 (검색어 + 목적지)
-        filtered_df = df[df['destination'].isin(selected_dests)]
+        st.sidebar.markdown("📍 **지역/목적지 선택**")
+        
+        # 주요 핀란드 항구 리스트 제공
+        major_finnish_ports = ["HELSINKI", "TURKU", "TALLINN", "KOTKA", "RAUMA", "HAMINA", "HANKO", "PORI", "OULU"]
+        
+        filter_mode = st.sidebar.radio("필터 모드", ["전체 보기", "주요 항구", "직접 선택"], index=0)
+        
+        filtered_df = df.copy()
+        
+        if filter_mode == "주요 항구":
+            selected_port_name = st.sidebar.selectbox("대상 항구 선택", major_finnish_ports)
+            # 목적지 문자열에 해당 항구 이름이 포함된 경우만 필터링
+            filtered_df = df[df['destination'].astype(str).str.upper().str.contains(selected_port_name, na=False)]
+            if filtered_df.empty:
+                st.sidebar.info(f"'{selected_port_name}'(으)로 이동 중인 것으로 표시된 배가 현재 데이터에 없습니다. (AIS 목적지는 항해사가 입력하므로 값이 다를 수 있습니다.)")
+        
+        elif filter_mode == "직접 선택":
+            if not raw_destinations:
+                st.sidebar.info("선택 가능한 구체적인 목적지 정보가 현재 데이터에 없습니다.")
+                selected_dests = []
+            else:
+                selected_dests = st.sidebar.multiselect("목적지 상세 선택", raw_destinations)
+                if selected_dests:
+                    filtered_df = df[df['destination'].astype(str).str.upper().isin(selected_dests)]
+        
+        # 선박명 검색어 적용
         if search_query:
             filtered_df = filtered_df[filtered_df['vessel_name'].str.contains(search_query, case=False, na=False)]
 
         # 상단 요약 지표
         m1, m2, m3 = st.columns(3)
-        m1.metric("표시 중인 선박", f"{len(filtered_df)} 척")
-        m2.metric("최고 속력", f"{filtered_df['speed'].max() if not filtered_df.empty else 0} Kn")
-        m3.metric("평균 속력", f"{round(filtered_df['speed'].mean(), 1) if not filtered_df.empty else 0} Kn")
+        m1.metric("표시 중인 선박", f"{len(filtered_df):,} 척")
+        m2.metric("필터링된 선박 최고 속력", f"{filtered_df['speed'].max() if not filtered_df.empty else 0} Kn")
+        m3.metric("평균 속력 (선택 범위)", f"{round(filtered_df['speed'].mean(), 1) if not filtered_df.empty else 0} Kn")
 
         # 화면 구성을 위한 탭
-        tab_map, tab_eta, tab_data = st.tabs(["🗺️ 실시간 지도", "⏳ ETA 계산기", "📊 상세 데이터"])
+        tab_map, tab_eta, tab_data = st.tabs(["🗺️ 실시간 지도 시각화", "⏳ 항로 ETA 계산", "📊 선박 리스트"])
 
         with tab_map:
             if not filtered_df.empty:
                 # 성능을 위해 상위 2000개만 지도에 표시
                 map_display_df = filtered_df.head(2000)
                 if len(filtered_df) > 2000:
-                    st.info("ℹ️ 성능을 위해 상위 2,000척의 위치만 지도에 표시합니다. 필터를 사용해 범위를 좁히세요.")
+                    st.info(f"ℹ️ 데이터가 너무 많아 상위 2,000척만 지도에 표시합니다. (전체: {len(filtered_df):,}척)")
 
                 avg_lat = map_display_df['lat'].mean()
                 avg_lon = map_display_df['lon'].mean()
                 m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7)
                 
-                # 마커 클러스터 추가 (수천 개의 마커 처리를 위해 필수)
+                # 마커 클러스터 추가
                 marker_cluster = MarkerCluster().add_to(m)
 
                 for i, row in map_display_df.iterrows():
-                    popup_text = f"<b>{row['vessel_name']}</b><br>목적지: {row['destination']}<br>속도: {row['speed']} Kn"
+                    dest_info = row['destination'] if row['destination'] != '정보 없음' else '미입력'
+                    popup_text = f"<b>{row['vessel_name']}</b><br>목적지: {dest_info}<br>속도: {row['speed']} Kn"
                     color = "blue" if row['speed'] > 0.5 else "red"
                     folium.Marker(
                         location=[row['lat'], row['lon']],
                         popup=folium.Popup(popup_text, max_width=200),
-                        tooltip=row['vessel_name'],
+                        tooltip=f"{row['vessel_name']} (To: {dest_info})",
                         icon=folium.Icon(color=color, icon='ship', prefix='fa')
                     ).add_to(marker_cluster)
 
