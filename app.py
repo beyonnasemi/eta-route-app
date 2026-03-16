@@ -45,16 +45,22 @@ try:
 
         # --- 필터 설정 ---
         st.sidebar.subheader("🔍 필터")
+        
+        # 1. 선박명 검색 추가
+        search_query = st.sidebar.text_input("🚢 선박명 검색", "").strip()
+        
+        # 2. 목적지 필터
         all_destinations = sorted([str(d) for d in df['destination'].unique()])
-        # 데이터가 너무 많으므로 초기에는 '정보 없음' 또는 일부만 선택
         default_selection = [d for d in all_destinations if d == '정보 없음' or d == 'Unknown']
         if not default_selection:
             default_selection = all_destinations[:5]
 
         selected_dests = st.sidebar.multiselect("목적지별 필터링", all_destinations, default=default_selection)
         
-        # 필터링 적용
+        # 필터링 적용 (검색어 + 목적지)
         filtered_df = df[df['destination'].isin(selected_dests)]
+        if search_query:
+            filtered_df = filtered_df[filtered_df['vessel_name'].str.contains(search_query, case=False, na=False)]
 
         # 상단 요약 지표
         m1, m2, m3 = st.columns(3)
