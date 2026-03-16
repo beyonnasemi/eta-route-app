@@ -1,57 +1,58 @@
 import requests
 import pandas as pd
 
-import requests
-import pandas as pd
-
-def fetch_ais_data(api_key=None):
+def fetch_ais_data():
     """
-    핀란드 해양청 공식 API(meri.digitraffic.fi)에서 실시간 선박 데이터를 가져옵니다.
+    핀란드 해양청 공식 API(meri.digitraffic.fi)에서 실시간 선박 위치 데이터를 가져옵니다.
+    네트워크 문제로 접속이 불가능할 경우 실습용 샘플 데이터를 반환합니다.
     """
-    # 더 안정적인 공식 API 엔드포인트로 변경
+    # 안정적인 공식 API 엔드포인트
     url = "https://meri.digitraffic.fi/api/ais/v1/locations"
     
     headers = {
-        "User-Agent": "eta-route-app/1.0 (Student Project)",
+        "User-Agent": "eta-route-app/1.0 (Student Project; contact: your-email@example.com)",
         "Accept-Encoding": "gzip",
         "Accept": "application/json"
     }
 
     try:
-        # 데이터 가져오기 시도
-        response = requests.get(url, headers=headers, timeout=10)
+        # 데이터 가져오기에 15초 제한을 두어 무한 대기를 방지합니다.
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
         
         vessels = []
+        # GeoJSON의 features 리스트를 순회하며 데이터 추출
         for feature in data.get('features', []):
-            properties = feature.get('properties', {})
-            geometry = feature.get('geometry', {})
-            coordinates = geometry.get('coordinates', [0, 0])
+            prop = feature.get('properties', {})
+            geom = feature.get('geometry', {})
+            coords = geom.get('coordinates', [0, 0])
             
-            if not properties.get('mmsi') or len(coordinates) < 2:
-                continue
-
-            vessels.append({
-                "mmsi": properties.get('mmsi'),
-                "lat": coordinates[1],
-                "lon": coordinates[0],
-                "speed": properties.get('sog', 0.0),
-                "vessel_name": properties.get('name', f"Vessel-{properties.get('mmsi')}"),
-                "destination": properties.get('destination', 'Unknown'), # 목적지 필드 추가
-                "timestamp": properties.get('timestamp')
-            })
+            # 필수 데이터(MMSI, 좌표)가 있는 경우만 추가
+            if prop.get('mmsi') and len(coords) >= 2:
+                vessels.append({
+                    "mmsi": prop.get('mmsi'),
+                    "lat": coords[1], # GeoJSON은 [경도, 위도] 순서
+                    "lon": coords[0],
+                    "speed": prop.get('sog', 0.0),
+                    "vessel_name": prop.get('name', f"Vessel-{prop.get('mmsi')}"),
+                    "destination": prop.get('destination', '정보 없음'),
+                    "timestamp": prop.get('timestamp')
+                })
             
         df = pd.DataFrame(vessels)
+        
         if not df.empty:
-            # 실시간 데이터임을 표시하는 플래그 추가
             df['is_real_data'] = True
             return df
+        else:
+            raise ValueError("API 응답에 선박 데이터가 없습니다.")
 
     except Exception as e:
-        # 네트워크 오류 발생 시 샘플 데이터 반환
-        print(f"⚠️ API 연결 실패: {e}")
+        # API 접속 실패 시 사용자에게 알리기 위해 터미널에 로그를 남깁니다.
+        print(f"⚠️ 실시간 API 연결 실패: {e}")
         
+        # 실습을 위해 미리 준비된 샘플 데이터 (핀란드 헬싱키 인근)
         sample_vessels = [
             {"mmsi": 230991000, "lat": 60.169, "lon": 24.938, "speed": 12.5, "vessel_name": "HELSINKI_EXPRESS", "destination": "Turku"},
             {"mmsi": 211234000, "lat": 59.933, "lon": 24.450, "speed": 8.2, "vessel_name": "FINLAND_STAR", "destination": "Tallinn"},
@@ -59,10 +60,11 @@ def fetch_ais_data(api_key=None):
             {"mmsi": 230112233, "lat": 60.100, "lon": 25.100, "speed": 18.0, "vessel_name": "BALTIC_LINER", "destination": "Kotka"}
         ]
         df_sample = pd.DataFrame(sample_vessels)
-        df_sample['is_real_data'] = False # 샘플 데이터임을 표시
+        df_sample['is_real_data'] = False
         return df_sample
 
-# 코드 단독 실행 테스트용
 if __name__ == "__main__":
-    df = fetch_ais_data()
-    print(df.head())
+    # 단독 실행 시 데이터 확인용
+    result_df = fetch_ais_data()
+    print(f"실시간 데이터 여부: {result_df['is_real_data'].iloc[0]}")
+    print(result_df.head())
